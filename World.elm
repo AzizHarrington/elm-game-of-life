@@ -2,7 +2,7 @@ module World exposing (..)
 
 
 import Array exposing (Array)
-import Html exposing (Html, div)
+import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (style)
 import Html.App
 import Html.Events exposing (onClick)
@@ -14,6 +14,12 @@ import Time exposing (Time, millisecond)
 
 
 type alias Model =
+  { running : Bool
+  , grid : Grid
+  }
+
+
+type alias Grid =
   Array Cell
 
 
@@ -25,10 +31,10 @@ type alias Cell =
 
 init : ( Model, Cmd Msg )
 init =
-  ( grid, Cmd.none )
+  ( Model False grid, Cmd.none )
 
 
-grid : Model
+grid : Grid
 grid =
   (Array.repeat 100 False)
   |> Array.indexedMap Cell
@@ -38,9 +44,9 @@ grid =
 
 
 type Msg
-  = Toggle Int
+  = ToggleCell Int
   | AgeWorld Time
-  | NoOp
+  | ToggleTime
 
 
 -- VIEW
@@ -48,12 +54,20 @@ type Msg
 
 view : Model -> Html Msg
 view model =
+  div []
+      [ worldGrid model
+      , controls model
+      ]
+
+
+worldGrid : Model -> Html Msg
+worldGrid model =
   div [ style [ ("width", "300px")
               , ("margin", "0 auto")
               , ("margin-top", "100px")
               ]
       ]
-      <| Array.toList (Array.map render model)
+      <| Array.toList (Array.map render model.grid)
 
 
 render : Cell -> Html Msg
@@ -71,9 +85,19 @@ render cell =
                 , ("float", "left")
                 , ("background-color", bgcolor)
                 ]
-        , onClick <| Toggle cell.id
+        , onClick <| ToggleCell cell.id
         ]
         []
+
+
+controls : Model -> Html Msg
+controls model =
+  let
+    toggleText =
+      if model.running == True then "Pause Game" else "Start Game"
+  in
+    div []
+        [ button [ onClick ToggleTime ] [ text toggleText ] ]
 
 
 -- UPDATE
@@ -82,26 +106,27 @@ render cell =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg of
-    Toggle id ->
-      let
-        toggleState cell =
-          if cell.id == id then
-            { cell | state = not cell.state }
-          else
-            cell
-      in
-        ( Array.map toggleState model, Cmd.none )
+    ToggleCell id ->
+      ( { model | grid = Array.map (toggleCell id) model.grid }, Cmd.none )
     AgeWorld _ ->
-      ( Array.map (age model) model, Cmd.none )
-    NoOp ->
-      ( model, Cmd.none )
+      ( { model | grid = Array.map (age model.grid) model.grid }, Cmd.none )
+    ToggleTime ->
+      ( { model | running = not model.running }, Cmd.none )
 
 
-age : Model -> Cell -> Cell
-age model cell =
+toggleCell : Int -> Cell -> Cell
+toggleCell id cell =
+  if cell.id == id then
+    { cell | state = not cell.state }
+  else
+    cell
+
+
+age : Grid -> Cell -> Cell
+age grid cell =
   let
     numNeighbors =
-      neighbors model cell.id
+      neighbors grid cell.id
       |> List.filter (\c -> c.state == True)
       |> List.foldl (\_ count -> count + 1) 0
 
@@ -122,8 +147,8 @@ age model cell =
     { cell | state = newState }
 
 
-neighbors : Model -> Int -> List Cell
-neighbors model index =
+neighbors : Grid -> Int -> List Cell
+neighbors grid index =
   let
     perimeter =
       [ index + 1 , index - 1
@@ -133,7 +158,7 @@ neighbors model index =
       ]
 
     getCell position =
-      case Array.get position model of
+      case Array.get position grid of
         Just cell ->
           cell
         Nothing ->
@@ -153,7 +178,10 @@ width =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Time.every (3000 * millisecond ) AgeWorld
+  if model.running then
+    Time.every (200 * millisecond ) AgeWorld
+  else
+    Sub.none
 
 
 -- MAIN
