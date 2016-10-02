@@ -1,11 +1,13 @@
 module World exposing (..)
 
 
-import Html exposing (Html, div, text)
+import Array exposing (Array)
+import Html exposing (Html, div)
 import Html.Attributes exposing (style)
 import Html.App
 import Html.Events exposing (onClick)
-import Array exposing (Array)
+import List
+import Time exposing (Time, millisecond)
 
 
 -- MODEL
@@ -37,6 +39,7 @@ grid =
 
 type Msg
   = Toggle Int
+  | AgeWorld Time
   | NoOp
 
 
@@ -70,7 +73,7 @@ render cell =
                 ]
         , onClick <| Toggle cell.id
         ]
-        [ text <| toString cell.id ]
+        []
 
 
 -- UPDATE
@@ -88,8 +91,61 @@ update msg model =
             cell
       in
         ( Array.map toggleState model, Cmd.none )
+    AgeWorld _ ->
+      ( Array.map (age model) model, Cmd.none )
     NoOp ->
       ( model, Cmd.none )
+
+
+age : Model -> Cell -> Cell
+age model cell =
+  let
+    numNeighbors =
+      neighbors model cell.id
+      |> List.filter (\c -> c.state == True)
+      |> List.foldl (\_ count -> count + 1) 0
+
+    resurrect =
+      cell.state == False && numNeighbors == 3
+
+    kill =
+      cell.state == True && (numNeighbors < 2 || numNeighbors > 3)
+
+    newState =
+      if resurrect then
+        True
+      else if kill then
+        False
+      else
+        cell.state
+  in
+    { cell | state = newState }
+
+
+neighbors : Model -> Int -> List Cell
+neighbors model index =
+  let
+    perimeter =
+      [ index + 1 , index - 1
+      , index + width, index - width
+      , index + width + 1, index - width + 1
+      , index + width - 1, index - width - 1
+      ]
+
+    getCell position =
+      case Array.get position model of
+        Just cell ->
+          cell
+        Nothing ->
+          -- Dead cells beyond world grid edge
+          Cell 0 False
+  in
+    List.map getCell perimeter
+
+
+width : Int
+width =
+  10
 
 
 -- SUBSCRIPTIONS
@@ -97,7 +153,7 @@ update msg model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.none
+  Time.every (3000 * millisecond ) AgeWorld
 
 
 -- MAIN
