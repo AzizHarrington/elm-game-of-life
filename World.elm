@@ -6,8 +6,9 @@ import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (style)
 import Html.App
 import Html.Events exposing (onClick, onMouseDown, onMouseOver, onMouseUp)
-import Html.Lazy exposing (lazy2)
+import Html.Lazy exposing (lazy, lazy2)
 import List
+import Random
 import Time exposing (Time, millisecond)
 
 
@@ -47,7 +48,7 @@ init =
       70
 
     gridPixelWidth =
-      1000
+      700
 
     initGrid =
       (Array.repeat (gridCellWidth ^ 2) False)
@@ -76,6 +77,7 @@ type Msg
   | MouseUp
   | AnimateCell Int
   | RandomizeGrid
+  | SetGrid (List Bool)
   | NoOp
 
 
@@ -93,7 +95,7 @@ view model =
               , ("margin-top", "100px")
               ]
       ]
-      [ controls model
+      [ lazy controls model
       , worldGrid model
       ]
 
@@ -103,14 +105,18 @@ controls model =
   let
     toggleText =
       if model.settings.running == True then "Pause Game" else "Start Game"
+
+    cleanSlateGrid =
+      List.repeat (model.settings.gridCellWidth ^ 2) False
   in
     div [ style [ ("margin", "0 auto")
                 , ("margin-bottom", "25px")
-                , ("width", "50%")
+                , ("width", (toString model.settings.gridPixelWidth) ++ "px")
                 ]
         ]
         [ button [ onClick ToggleTime ] [ text toggleText ]
-        , button [ onClick RandomizeGrid ] [ text "Randomize Grid" ]
+        , button [ onClick RandomizeGrid ] [ text "Randomize" ]
+        , button [ onClick <| SetGrid cleanSlateGrid ] [ text "Reset" ]
         ]
 
 
@@ -161,6 +167,12 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   let
     currentSettings = model.settings
+
+    updateRunning state =
+      { currentSettings | running = state }
+
+    updateHighlight state =
+      { currentSettings | highlight = state }
   in
     case msg of
       ToggleCell id ->
@@ -168,27 +180,30 @@ update msg model =
       AgeWorld _ ->
         ( { model | grid = Array.map (age model) model.grid }, Cmd.none )
       ToggleTime ->
-        let
-          newSettings =
-            { currentSettings | running = not currentSettings.running }
-        in
-          ( { model | settings = newSettings }, Cmd.none )
+        ( { model | settings = updateRunning (not model.settings.running) }, Cmd.none )
       MouseDown ->
-        let
-          newSettings = { currentSettings | highlight = True }
-        in
-          ( { model | settings = newSettings }, Cmd.none )
+        ( { model | settings = updateHighlight True }, Cmd.none )
       MouseUp ->
-        let
-          newSettings = { currentSettings | highlight = False }
-        in
-          ( { model | settings = newSettings }, Cmd.none )
+        ( { model | settings = updateHighlight False }, Cmd.none )
       AnimateCell id ->
         ( { model | grid = Array.map (animateCell id) model.grid }, Cmd.none )
       RandomizeGrid ->
-        ( model, Cmd.none )
+        ( { model | settings = updateRunning False }, Random.generate SetGrid (boolList model.settings) )
+      SetGrid newStates ->
+        let
+          newGrid =
+            newStates
+            |> Array.fromList
+            |> Array.indexedMap Cell
+        in
+          ( { model | grid = newGrid, settings = updateRunning False }, Cmd.none )
       NoOp ->
         ( model, Cmd.none )
+
+
+boolList : Settings -> Random.Generator (List Bool)
+boolList settings =
+  Random.list (settings.gridCellWidth ^ 2) Random.bool
 
 
 toggleCell : Int -> Cell -> Cell
