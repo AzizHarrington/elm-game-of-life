@@ -4,7 +4,7 @@
     "repository": "https://github.com/AzizHarrington/elm-game-of-life.git",
     "license": "BSD3",
     "source-directories": [
-        "."
+        "src"
     ],
     "exposed-modules": [],
     "dependencies": {
