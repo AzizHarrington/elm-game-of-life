@@ -12,7 +12,8 @@ import Random
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   let
-    currentSettings = model.settings
+    currentSettings =
+      model.settings
 
     updateRunning state =
       { currentSettings | running = state }
@@ -22,7 +23,11 @@ update msg model =
   in
     case msg of
       ToggleCell id ->
-        ( { model | grid = Array.map (toggleCell id) model.grid }, Cmd.none )
+        let
+          newGrid =
+            toggleCell id model.grid
+        in
+          ( { model | grid = newGrid }, Cmd.none )
       AgeWorld _ ->
         ( { model | grid = Array.map (age model) model.grid }, Cmd.none )
       ToggleTime ->
@@ -32,7 +37,11 @@ update msg model =
       MouseUp ->
         ( { model | settings = updateHighlight False }, Cmd.none )
       AnimateCell id ->
-        ( { model | grid = Array.map (animateCell id) model.grid }, Cmd.none )
+        let
+          newGrid =
+            updateCellState id True model.grid
+        in
+          ( { model | grid = newGrid }, Cmd.none )
       RandomizeGrid ->
         ( { model | settings = updateRunning False }, Random.generate SetGrid (boolList model.settings) )
       SetGrid newStates ->
@@ -52,22 +61,24 @@ boolList settings =
   Random.list (settings.gridCellWidth ^ 2) Random.bool
 
 
-toggleCell : Int -> Cell -> Cell
-toggleCell id cell =
-  setCellState id cell (not cell.isAlive)
+toggleCell : Int -> Grid -> Grid
+toggleCell id grid =
+  let
+    state =
+      case Array.get id grid of
+        Just cell ->
+          not cell.isAlive
+        Nothing ->
+          -- in the NOT LIKELY case cell lookup fails,
+          -- just default to live when toggling
+          True
+  in
+    updateCellState id state grid
 
 
-animateCell : Int -> Cell -> Cell
-animateCell id cell =
-  setCellState id cell True
-
-
-setCellState : Int -> Cell -> Bool -> Cell
-setCellState id cell newState =
-  if cell.id == id then
-    { cell | isAlive = newState }
-  else
-    cell
+updateCellState : Int -> Bool -> Grid -> Grid
+updateCellState id state grid =
+  Array.set id (Cell id state) grid
 
 
 age : Model -> Cell -> Cell
@@ -79,10 +90,10 @@ age model cell =
       |> List.foldl (\_ count -> count + 1) 0
 
     resurrect =
-      cell.isAlive == False && numNeighbors == 3
+      numNeighbors == 3 && not cell.isAlive
 
     kill =
-      cell.isAlive == True && (numNeighbors < 2 || numNeighbors > 3)
+      (numNeighbors < 2 || numNeighbors > 3) && cell.isAlive
 
     newState =
       if resurrect then
