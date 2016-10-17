@@ -2,7 +2,7 @@ module Update exposing (..)
 
 
 import Messages exposing (..)
-import Model exposing (Model, Settings, Grid, Cell)
+import Model exposing (..)
 
 
 import Array
@@ -11,78 +11,136 @@ import Random
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-  let
-    currentSettings = model.settings
+  case msg of
+    ToggleCell id ->
+      let
+        grid =
+          toggleCell id model.grid
+      in
+        ( { model | grid = grid }, Cmd.none )
 
-    updateRunning state =
-      { currentSettings | running = state }
+    Step ->
+      let
+        grid =
+          ageGrid model
+      in
+        ( { model | grid = grid }, Cmd.none )
 
-    updateHighlight state =
-      { currentSettings | highlight = state }
-  in
-    case msg of
-      ToggleCell id ->
-        ( { model | grid = Array.map (toggleCell id) model.grid }, Cmd.none )
-      AgeWorld _ ->
-        ( { model | grid = Array.map (age model) model.grid }, Cmd.none )
-      ToggleTime ->
-        ( { model | settings = updateRunning (not model.settings.running) }, Cmd.none )
-      MouseDown ->
-        ( { model | settings = updateHighlight True }, Cmd.none )
-      MouseUp ->
-        ( { model | settings = updateHighlight False }, Cmd.none )
-      AnimateCell id ->
-        ( { model | grid = Array.map (animateCell id) model.grid }, Cmd.none )
-      RandomizeGrid ->
-        ( { model | settings = updateRunning False }, Random.generate SetGrid (boolList model.settings) )
-      SetGrid newStates ->
-        let
-          newGrid =
-            newStates
-            |> Array.fromList
-            |> Array.indexedMap Cell
-        in
-          ( { model | grid = newGrid, settings = updateRunning False }, Cmd.none )
-      NoOp ->
-        ( model, Cmd.none )
+    AgeWorld _ ->
+      let
+        grid =
+          ageGrid model
+
+        hasLiveCells =
+            grid
+            |> Array.toList
+            |> List.any (\c -> c.isAlive)
+
+        settings =
+          updateSettings model.settings (Running hasLiveCells)
+      in
+        ( { model | grid = grid, settings = settings }, Cmd.none )
+
+    ToggleTime ->
+      let
+        settings =
+          updateSettings model.settings (Running (not model.settings.running))
+      in
+        ( { model | settings = settings }, Cmd.none )
+
+    MouseDown ->
+      let
+        settings =
+          updateSettings model.settings (Highlight True)
+      in
+        ( { model | settings = settings }, Cmd.none )
+
+    MouseUp ->
+      let
+        settings =
+          updateSettings model.settings  (Highlight False)
+      in
+        ( { model | settings = settings }, Cmd.none )
+
+    AnimateCell id ->
+      let
+        grid =
+          updateCellState id True model.grid
+      in
+        ( { model | grid = grid }, Cmd.none )
+
+    RandomizeGrid ->
+      let
+        settings =
+          updateSettings model.settings (Running False)
+
+        randomStates =
+          Random.list (model.settings.gridCellWidth ^ 2) Random.bool
+
+        command =
+          Random.generate SetGrid randomStates
+      in
+        ( { model | settings = settings }, command )
+
+    SetGrid newStates ->
+      let
+        grid =
+          newStates
+          |> Array.fromList
+          |> Array.indexedMap Cell
+
+        settings =
+          updateSettings model.settings (Running False)
+      in
+        ( { model | grid = grid, settings = settings }, Cmd.none )
+
+    NoOp ->
+      ( model, Cmd.none )
 
 
-boolList : Settings -> Random.Generator (List Bool)
-boolList settings =
-  Random.list (settings.gridCellWidth ^ 2) Random.bool
+updateSettings : Settings -> Setting -> Settings
+updateSettings settings setting =
+  case setting of
+    Running state ->
+      { settings | running = state }
+    Highlight state ->
+      { settings | highlight = state }
 
 
-toggleCell : Int -> Cell -> Cell
-toggleCell id cell =
-  setCellState id cell (not cell.isAlive)
+toggleCell : Int -> Grid -> Grid
+toggleCell id grid =
+  case Array.get id grid of
+    Just cell ->
+      updateCellState id (not cell.isAlive) grid
+    Nothing ->
+      -- in the NOT LIKELY case cell lookup fails,
+      -- just default to live when toggling
+      updateCellState id True grid
 
 
-animateCell : Int -> Cell -> Cell
-animateCell id cell =
-  setCellState id cell True
+updateCellState : Int -> Bool -> Grid -> Grid
+updateCellState id state grid =
+  Array.set id (Cell id state) grid
 
 
-setCellState : Int -> Cell -> Bool -> Cell
-setCellState id cell newState =
-  if cell.id == id then
-    { cell | isAlive = newState }
-  else
-    cell
+ageGrid : Model -> Grid
+ageGrid model =
+  Array.map (ageCell model) model.grid
 
 
-age : Model -> Cell -> Cell
-age model cell =
+ageCell : Model -> Cell -> Cell
+ageCell model cell =
   let
     numNeighbors =
-      neighbors model cell.id
+      neighbors cell.id model
       |> List.filter (\c -> c.isAlive == True)
       |> List.foldl (\_ count -> count + 1) 0
 
     resurrect =
-      cell.isAlive == False && numNeighbors == 3
+      numNeighbors == 3 && not cell.isAlive
 
     kill =
-      cell.isAlive == True && (numNeighbors < 2 || numNeighbors > 3)
+      (numNeighbors < 2 || numNeighbors > 3) && cell.isAlive
 
     newState =
       if resurrect then
@@ -95,8 +153,8 @@ age model cell =
     { cell | isAlive = newState }
 
 
-neighbors : Model -> Int -> List Cell
-neighbors model index =
+neighbors : Int -> Model -> List Cell
+neighbors index model =
   let
     gridCellWidth =
       model.settings.gridCellWidth

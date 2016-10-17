@@ -6,6 +6,7 @@ import Time exposing (Time)
 
 type Msg
   = ToggleCell Int
+  | Step
   | AgeWorld Time
   | ToggleTime
   | MouseDown
