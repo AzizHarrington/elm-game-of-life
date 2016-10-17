@@ -3,7 +3,7 @@ module View exposing (..)
 
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (style)
-import Html.Events exposing (onClick, onMouseDown, onMouseOver, onMouseUp)
+import Html.Events exposing (onClick, onMouseEnter, onMouseDown, onMouseOut, onMouseUp)
 import Html.Lazy exposing (lazy, lazy2)
 
 
@@ -33,10 +33,16 @@ controls : Model -> Html Msg
 controls model =
   let
     toggleText =
-      if model.settings.running == True then "Pause Game" else "Start Game"
+      if model.settings.running then "Pause" else "Start"
 
     cleanSlateGrid =
       List.repeat (model.settings.gridCellWidth ^ 2) False
+
+    step =
+      if not model.settings.running then
+        button [ onClick Step ] [ text "Step" ]
+      else
+        div [] []
   in
     div [ style [ ("margin", "0 auto")
                 , ("margin-bottom", "25px")
@@ -46,6 +52,7 @@ controls model =
         [ button [ onClick ToggleTime ] [ text toggleText ]
         , button [ onClick RandomizeGrid ] [ text "Randomize" ]
         , button [ onClick <| SetGrid cleanSlateGrid ] [ text "Reset" ]
+        , step
         ]
 
 
@@ -57,7 +64,6 @@ worldGrid model =
   in
     div [ style [ ("width", (toString model.settings.gridPixelWidth) ++ "px")
                 , ("height", (toString model.settings.gridPixelWidth) ++ "px")
-                , ("outline", "1px solid")
                 , ("margin", "0 auto")
                 ]
         , onMouseDown MouseDown
@@ -75,6 +81,12 @@ renderCell cell settings =
       else
         "white"
 
+    textcolor =
+      if cell.isAlive then
+        "white"
+      else
+        "black"
+
     maybeAnimate id =
       if settings.highlight then AnimateCell id else NoOp
   in
@@ -82,8 +94,11 @@ renderCell cell settings =
                 , ("height", (toString settings.cellPixelWidth) ++ "px")
                 , ("float", "left")
                 , ("background-color", bgcolor)
+                , ("color", textcolor)
+                , ("outline", "1px solid LightGray")
                 ]
         , onClick <| ToggleCell cell.id
-        , onMouseOver <| maybeAnimate cell.id
+        , onMouseOut <| maybeAnimate cell.id
+        , onMouseEnter <| maybeAnimate cell.id
         ]
         []

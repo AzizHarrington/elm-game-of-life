@@ -24,6 +24,11 @@ type alias Settings =
   }
 
 
+type Setting
+  = Running Bool
+  | Highlight Bool
+
+
 type alias Grid =
   Array Cell
 
@@ -38,10 +43,10 @@ init : ( Model, Cmd Msg )
 init =
   let
     gridCellWidth =
-      70
+      100
 
     gridPixelWidth =
-      700
+      1000
 
     initGrid =
       (Array.repeat (gridCellWidth ^ 2) False)
