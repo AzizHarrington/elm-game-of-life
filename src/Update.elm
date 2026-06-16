@@ -6,6 +6,7 @@ import Model exposing (..)
 
 
 import Array
+import Patterns
 import Random
 
 
@@ -24,7 +25,7 @@ update msg model =
         grid =
           ageGrid model
       in
-        ( { model | grid = grid }, Cmd.none )
+        ( { model | grid = grid, generation = model.generation + 1 }, Cmd.none )
 
     AgeWorld _ ->
       let
@@ -39,7 +40,7 @@ update msg model =
         settings =
           updateSettings model.settings (Running hasLiveCells)
       in
-        ( { model | grid = grid, settings = settings }, Cmd.none )
+        ( { model | grid = grid, settings = settings, generation = model.generation + 1 }, Cmd.none )
 
     ToggleTime ->
       let
@@ -75,7 +76,7 @@ update msg model =
           updateSettings model.settings (Running False)
 
         randomStates =
-          Random.list (model.settings.gridCellWidth ^ 2) Random.bool
+          Random.list (model.settings.gridCellWidth ^ 2) randomBool
 
         command =
           Random.generate SetGrid randomStates
@@ -92,10 +93,30 @@ update msg model =
         settings =
           updateSettings model.settings (Running False)
       in
-        ( { model | grid = grid, settings = settings }, Cmd.none )
+        ( { model | grid = grid, settings = settings, generation = 0 }, Cmd.none )
+
+    LoadPattern pattern ->
+      let
+        deadGrid =
+          Array.repeat (model.settings.gridCellWidth ^ 2) False
+          |> Array.indexedMap Cell
+
+        grid =
+          Patterns.aliveIndices model.settings.gridCellWidth pattern
+          |> List.foldl (\index g -> updateCellState index True g) deadGrid
+
+        settings =
+          updateSettings model.settings (Running False)
+      in
+        ( { model | grid = grid, settings = settings, generation = 0 }, Cmd.none )
 
     NoOp ->
       ( model, Cmd.none )
+
+
+randomBool : Random.Generator Bool
+randomBool =
+  Random.uniform True [ False ]
 
 
 updateSettings : Settings -> Setting -> Settings
@@ -178,7 +199,7 @@ neighbors index model =
             deadCell
 
     beyondWorldSide pos =
-      abs ((rem index gridCellWidth) - (rem pos gridCellWidth)) > 1
+      abs ((remainderBy gridCellWidth index) - (remainderBy gridCellWidth pos)) > 1
 
     deadCell =
       Cell -1 False
