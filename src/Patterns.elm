@@ -1,14 +1,18 @@
 module Patterns exposing (Anchor(..), Pattern, all, aliveIndices, puffer)
 
+import Breeder
+
 
 type Anchor
   = Center
   | Top
+  | Left
 
 
 type alias Pattern =
   { name : String
   , anchor : Anchor -- where on the grid to drop the pattern
+  , gridSize : Int -- grid width (in cells) to switch to when this pattern loads
   , cells : List ( Int, Int ) -- (row, col) offsets within the pattern's bounding box
   }
 
@@ -20,6 +24,7 @@ all =
   , pulsar
   , acorn
   , puffer
+  , breeder
   ]
 
 
@@ -50,8 +55,16 @@ aliveIndices gridWidth pattern =
         Top ->
           2
 
+        Left ->
+          (gridWidth - height) // 2
+
     colOffset =
-      (gridWidth - width) // 2
+      case pattern.anchor of
+        Left ->
+          20
+
+        _ ->
+          (gridWidth - width) // 2
 
     toIndex ( row, col ) =
       (rowOffset + row) * gridWidth + (colOffset + col)
@@ -63,6 +76,7 @@ glider : Pattern
 glider =
   { name = "Glider"
   , anchor = Center
+  , gridSize = 100
   , cells =
       [ ( 0, 1 )
       , ( 1, 2 )
@@ -75,6 +89,7 @@ acorn : Pattern
 acorn =
   { name = "Acorn"
   , anchor = Center
+  , gridSize = 100
   , cells =
       [ ( 0, 1 )
       , ( 1, 3 )
@@ -102,6 +117,7 @@ pulsar =
   in
     { name = "Pulsar"
     , anchor = Center
+    , gridSize = 100
     , cells = horizontal ++ vertical
     }
 
@@ -111,6 +127,7 @@ gosperGun : Pattern
 gosperGun =
   { name = "Glider Gun"
   , anchor = Center
+  , gridSize = 100
   , cells =
       [ ( 4, 0 ), ( 5, 0 ), ( 4, 1 ), ( 5, 1 )
       , ( 4, 10 ), ( 5, 10 ), ( 6, 10 )
@@ -168,5 +185,19 @@ puffer : Pattern
 puffer =
   { name = "Puffer Train"
   , anchor = Top
+  , gridSize = 100
   , cells = rotateCW pufferCells
+  }
+
+
+-- Gosper's breeder: the first pattern shown to grow quadratically. It sweeps
+-- right laying down glider guns, which in turn spray gliders. It is huge (4060
+-- cells, 749 wide) and needs a correspondingly huge grid, so loading it
+-- switches to a 1200-cell-wide world and starts it at the left edge.
+breeder : Pattern
+breeder =
+  { name = "Breeder"
+  , anchor = Left
+  , gridSize = 1200
+  , cells = Breeder.cells
   }

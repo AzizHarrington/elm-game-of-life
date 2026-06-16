@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Elm Game of Life</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; }
+    button { margin: 2px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="./elm.js"></script>
+  <script>
+    var app = Elm.Main.init({ node: document.getElementById("app") });
+
+    // Latest frame geometry, kept for translating mouse events to cell indices.
+    var gridSize = 0;
+    var cellPx = 1;
+    var wired = false;
+
+    function canvas() {
+      return document.getElementById("grid");
+    }
+
+    // Translate a mouse event into a flat cell index (accounting for any CSS
+    // scaling of the canvas), or null if outside the grid.
+    function indexOf(c, e) {
+      var rect = c.getBoundingClientRect();
+      var sx = c.width / rect.width;
+      var sy = c.height / rect.height;
+      var col = Math.floor((e.clientX - rect.left) * sx / cellPx);
+      var row = Math.floor((e.clientY - rect.top) * sy / cellPx);
+      if (col < 0 || row < 0 || col >= gridSize || row >= gridSize) return null;
+      return row * gridSize + col;
+    }
+
+    function wire(c) {
+      var dragging = false;
+      var moved = false;
+      var startIndex = null;
+
+      c.addEventListener("mousedown", function (e) {
+        dragging = true;
+        moved = false;
+        startIndex = indexOf(c, e);
+        e.preventDefault();
+      });
+      c.addEventListener("mousemove", function (e) {
+        if (!dragging) return;
+        moved = true;
+        var i = indexOf(c, e);
+        if (i !== null) app.ports.cellPainted.send(i);
+      });
+      window.addEventListener("mouseup", function () {
+        if (dragging && !moved && startIndex !== null) {
+          app.ports.cellToggled.send(startIndex);
+        }
+        dragging = false;
+      });
+      wired = true;
+    }
+
+    // The canvas may not be in the DOM on the very first frame, so retry until
+    // it exists, then draw.
+    function draw(data) {
+      var c = canvas();
+      if (!c) {
+        requestAnimationFrame(function () { draw(data); });
+        return;
+      }
+      gridSize = data.size;
+      cellPx = data.cellPx;
+      var w = Math.round(data.size * data.cellPx);
+      if (c.width !== w) c.width = w;
+      if (c.height !== w) c.height = w;
+      if (!wired) wire(c);
+
+      var ctx = c.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, w);
+      ctx.fillStyle = "#000000";
+      var live = data.live;
+      var size = data.size;
+      var px = data.cellPx;
+      for (var k = 0; k < live.length; k++) {
+        var idx = live[k];
+        var x = (idx % size) * px;
+        var y = Math.floor(idx / size) * px;
+        ctx.fillRect(x, y, px, px);
+      }
+    }
+
+    app.ports.drawGrid.subscribe(draw);
+  </script>
+</body>
+</html>

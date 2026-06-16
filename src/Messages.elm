@@ -17,4 +17,9 @@ type Msg
   | RandomizeGrid
   | SetGrid (List Bool)
   | LoadPattern Pattern
+  | ResetGrid
+  | ZoomIn
+  | ZoomOut
+  | SpeedUp
+  | SlowDown
   | NoOp

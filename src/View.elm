@@ -1,30 +1,25 @@
 module View exposing (..)
 
 
-import Html exposing (Html, button, div, text)
-import Html.Attributes exposing (style)
-import Html.Events exposing (onClick, onMouseEnter, onMouseDown, onMouseOut, onMouseUp)
-import Html.Lazy exposing (lazy, lazy2)
+import Html exposing (Html, button, canvas, div, text)
+import Html.Attributes exposing (id, style)
+import Html.Events exposing (onClick)
 
 
-import Array
 import Messages exposing (..)
-import Model exposing (Model, Settings, Grid, Cell)
+import Model exposing (Model, Settings, Grid)
 import Patterns
 
 
 view : Model -> Html Msg
 view model =
-  div [ style "-webkit-touch-callout" "none"
-      , style "-webkit-user-select" "none"
-      , style "-khtml-user-select" "none"
+  div [ style "-webkit-user-select" "none"
       , style "-moz-user-select" "none"
-      , style "-ms-user-select" "none"
-      , style "-o-user-select" "none"
       , style "user-select" "none"
-      , style "margin-top" "100px"
+      , style "margin-top" "40px"
+      , style "text-align" "center"
       ]
-      [ lazy controls model
+      [ controls model
       , worldGrid model
       ]
 
@@ -35,23 +30,17 @@ controls model =
     toggleText =
       if model.settings.running then "Pause" else "Start"
 
-    cleanSlateGrid =
-      List.repeat (model.settings.gridCellWidth ^ 2) False
-
     step =
       if not model.settings.running then
         button [ onClick Step ] [ text "Step" ]
       else
-        div [] []
+        text ""
 
     patternButton pattern =
       button [ onClick <| LoadPattern pattern ] [ text pattern.name ]
 
-    liveCells =
-      model.grid
-        |> Array.toList
-        |> List.filter .isAlive
-        |> List.length
+    perSecond =
+      round (1000 / model.settings.timeStep)
 
     counters =
       div [ style "margin-top" "10px"
@@ -61,64 +50,51 @@ controls model =
               "Generation: "
                 ++ String.fromInt model.generation
                 ++ "    Live cells: "
-                ++ String.fromInt liveCells
+                ++ String.fromInt model.population
+                ++ "    Grid: "
+                ++ String.fromInt model.settings.gridCellWidth
+                ++ "²    Zoom: "
+                ++ String.fromFloat model.settings.cellPixelWidth
+                ++ "px    Speed: "
+                ++ String.fromInt perSecond
+                ++ "/s"
           ]
   in
-    div [ style "margin" "0 auto"
-        , style "margin-bottom" "25px"
-        , style "width" (String.fromInt model.settings.gridPixelWidth ++ "px")
+    div [ style "margin-bottom" "16px" ]
+        [ div []
+            ([ button [ onClick ToggleTime ] [ text toggleText ]
+             , button [ onClick RandomizeGrid ] [ text "Randomize" ]
+             , button [ onClick ResetGrid ] [ text "Reset" ]
+             , step
+             ]
+                ++ List.map patternButton Patterns.all
+            )
+        , div [ style "margin-top" "8px" ]
+            [ button [ onClick ZoomOut ] [ text "Zoom −" ]
+            , button [ onClick ZoomIn ] [ text "Zoom +" ]
+            , button [ onClick SlowDown ] [ text "Slower" ]
+            , button [ onClick SpeedUp ] [ text "Faster" ]
+            ]
+        , counters
         ]
-        ([ button [ onClick ToggleTime ] [ text toggleText ]
-         , button [ onClick RandomizeGrid ] [ text "Randomize" ]
-         , button [ onClick <| SetGrid cleanSlateGrid ] [ text "Reset" ]
-         , step
-         ]
-            ++ List.map patternButton Patterns.all
-            ++ [ counters ]
-        )
 
 
+-- The grid is drawn by JS onto this canvas (see index.html). Its pixel size and
+-- contents come through the drawGrid port; here we just provide the element and
+-- a stable id for JS to target.
 worldGrid : Model -> Html Msg
 worldGrid model =
-  let
-    lazyRender cell =
-      lazy2 renderCell cell model.settings
-  in
-    div [ style "width" (String.fromInt model.settings.gridPixelWidth ++ "px")
-        , style "height" (String.fromInt model.settings.gridPixelWidth ++ "px")
-        , style "margin" "0 auto"
-        , onMouseDown MouseDown
-        , onMouseUp MouseUp
-        ]
-        (Array.toList (Array.map lazyRender model.grid))
-
-
-renderCell : Cell -> Settings -> Html Msg
-renderCell cell settings =
-  let
-    bgcolor =
-      if cell.isAlive then
-        "black"
-      else
-        "white"
-
-    textcolor =
-      if cell.isAlive then
-        "white"
-      else
-        "black"
-
-    maybeAnimate id =
-      if settings.highlight then AnimateCell id else NoOp
-  in
-    div [ style "width" (String.fromFloat settings.cellPixelWidth ++ "px")
-        , style "height" (String.fromFloat settings.cellPixelWidth ++ "px")
-        , style "float" "left"
-        , style "background-color" bgcolor
-        , style "color" textcolor
-        , style "outline" "1px solid LightGray"
-        , onClick <| ToggleCell cell.id
-        , onMouseOut <| maybeAnimate cell.id
-        , onMouseEnter <| maybeAnimate cell.id
+  div
+    [ style "display" "inline-block"
+    , style "overflow" "auto"
+    , style "max-width" "94vw"
+    , style "max-height" "78vh"
+    , style "border" "1px solid #ccc"
+    ]
+    [ canvas
+        [ id "grid"
+        , style "image-rendering" "pixelated"
+        , style "display" "block"
         ]
         []
+    ]
