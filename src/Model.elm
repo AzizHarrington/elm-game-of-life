@@ -5,12 +5,12 @@ import Messages exposing (Msg)
 
 
 import Array exposing (Array)
-import Time exposing (millisecond)
 
 
 type alias Model =
   { settings : Settings
   , grid : Grid
+  , generation : Int
   }
 
 
@@ -39,8 +39,8 @@ type alias Cell =
   }
 
 
-init : ( Model, Cmd Msg )
-init =
+init : () -> ( Model, Cmd Msg )
+init _ =
   let
     gridCellWidth =
       100
@@ -54,11 +54,11 @@ init =
 
     initSettings =
       { running = False
-      , timeStep = 100 * millisecond
+      , timeStep = 100
       , highlight = False
       , gridCellWidth = gridCellWidth
       , gridPixelWidth = gridPixelWidth
       , cellPixelWidth = toFloat gridPixelWidth / toFloat gridCellWidth
       }
   in
-    ( { settings = initSettings, grid = initGrid }, Cmd.none )
+    ( { settings = initSettings, grid = initGrid, generation = 0 }, Cmd.none )
