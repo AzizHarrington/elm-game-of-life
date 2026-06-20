@@ -14,64 +14,269 @@
   <script>
     var app = Elm.Main.init({ node: document.getElementById("app") });
 
-    // Latest frame geometry, kept for translating mouse events to cell indices.
-    var gridSize = 0;
+    // The world: a flat Uint8Array, double-buffered. Cell values:
+    //   0 = dead, 1 = alive, 2 = black hole (immune to Conway rules)
+    var size = 0;
     var cellPx = 1;
+    var gridA = new Uint8Array(0);
+    var gridB = new Uint8Array(0);
     var wired = false;
+    var gravity = 0;            // 0 = off .. 8 = strong attraction
+    var reflect = false;        // reflecting walls vs dead edges
+    var holes = new Set();      // indices of black holes
+    var mass = {};              // black-hole index -> accumulated mass
+
+    // Stellar thresholds (only active while gravity is on).
+    var FORM_NEIGHBORS = 6;     // crowding at/above this collapses into a black hole
+    var NOVA_MASS = 50;         // a black hole this heavy goes supernova
+    var NOVA_RADIUS = 10;       // radius of the supernova shell
 
     function canvas() {
       return document.getElementById("grid");
     }
 
-    // Translate a mouse event into a flat cell index (accounting for any CSS
-    // scaling of the canvas), or null if outside the grid.
-    function indexOf(c, e) {
-      var rect = c.getBoundingClientRect();
-      var sx = c.width / rect.width;
-      var sy = c.height / rect.height;
-      var col = Math.floor((e.clientX - rect.left) * sx / cellPx);
-      var row = Math.floor((e.clientY - rect.top) * sy / cellPx);
-      if (col < 0 || row < 0 || col >= gridSize || row >= gridSize) return null;
-      return row * gridSize + col;
+    // --- Engine commands from Elm ---
+
+    function allocate(d, fill) {
+      size = d.size;
+      cellPx = d.cellPx;
+      var n = size * size;
+      gridA = new Uint8Array(n);
+      gridB = new Uint8Array(n);
+      holes = new Set();
+      mass = {};
+      if (fill) fill(gridA, n);
+      render();
     }
 
-    function wire(c) {
-      var dragging = false;
-      var moved = false;
-      var startIndex = null;
+    app.ports.loadEngine.subscribe(function (d) {
+      allocate(d, function (a) {
+        var live = d.live;
+        for (var k = 0; k < live.length; k++) a[live[k]] = 1;
+      });
+    });
 
-      c.addEventListener("mousedown", function (e) {
-        dragging = true;
-        moved = false;
-        startIndex = indexOf(c, e);
-        e.preventDefault();
+    app.ports.randomizeEngine.subscribe(function (d) {
+      allocate(d, function (a, n) {
+        for (var i = 0; i < n; i++) a[i] = Math.random() < 0.5 ? 1 : 0;
       });
-      c.addEventListener("mousemove", function (e) {
-        if (!dragging) return;
-        moved = true;
-        var i = indexOf(c, e);
-        if (i !== null) app.ports.cellPainted.send(i);
-      });
-      window.addEventListener("mouseup", function () {
-        if (dragging && !moved && startIndex !== null) {
-          app.ports.cellToggled.send(startIndex);
-        }
-        dragging = false;
-      });
-      wired = true;
-    }
+    });
 
-    // The canvas may not be in the DOM on the very first frame, so retry until
-    // it exists, then draw.
-    function draw(data) {
-      var c = canvas();
-      if (!c) {
-        requestAnimationFrame(function () { draw(data); });
-        return;
+    app.ports.stepEngine.subscribe(function () {
+      if (gravity !== 0) {
+        gravityStep();
+        blackHoleStep();
+        stellarStep();
       }
-      gridSize = data.size;
-      cellPx = data.cellPx;
-      var w = Math.round(data.size * data.cellPx);
+      lifeStep();
+      render();
+    });
+
+    app.ports.setZoom.subscribe(function (px) {
+      cellPx = px;
+      render();
+    });
+
+    app.ports.setGravity.subscribe(function (g) {
+      gravity = g;
+      render(); // redraw (and report population) so the UI reflects the change
+    });
+
+    app.ports.setReflect.subscribe(function (on) {
+      reflect = on;
+      render(); // redraw (and report population) so the UI reflects the change
+    });
+
+    // The clock runs in a Web Worker so it keeps ticking when the tab is hidden
+    // (a backgrounded page's setInterval/requestAnimationFrame get frozen, but a
+    // worker's timer keeps going). Each tick advances one generation via Elm.
+    var tickerSrc =
+      "var id=null;onmessage=function(e){var d=e.data;" +
+      "if(d.cmd==='start'){if(id)clearInterval(id);id=setInterval(function(){postMessage(0);},d.ms);}" +
+      "else if(d.cmd==='stop'){if(id){clearInterval(id);id=null;}}};";
+    var ticker = new Worker(URL.createObjectURL(new Blob([tickerSrc], { type: "application/javascript" })));
+    ticker.onmessage = function () { app.ports.tock.send(0); };
+
+    app.ports.runEngine.subscribe(function (d) {
+      if (d.running) ticker.postMessage({ cmd: "start", ms: Math.max(1, d.ms) });
+      else ticker.postMessage({ cmd: "stop" });
+    });
+
+    // --- Count live (or black-hole) neighbors. Edges count as dead, unless
+    // reflecting walls are on, in which case an out-of-bounds neighbor mirrors
+    // the cell across the edge (-1 -> 1, size -> size-2), so the wall acts like
+    // a mirror without a cell ever counting itself. ---
+
+    function neighbors(a, s, r, c) {
+      if (!reflect) {
+        var i = r * s + c, cnt = 0;
+        var up = r > 0, dn = r < s - 1, lf = c > 0, rt = c < s - 1;
+        if (up) { var u = i - s; if (lf && a[u - 1]) cnt++; if (a[u]) cnt++; if (rt && a[u + 1]) cnt++; }
+        if (lf && a[i - 1]) cnt++;
+        if (rt && a[i + 1]) cnt++;
+        if (dn) { var d = i + s; if (lf && a[d - 1]) cnt++; if (a[d]) cnt++; if (rt && a[d + 1]) cnt++; }
+        return cnt;
+      }
+      var total = 0;
+      for (var dr = -1; dr <= 1; dr++) {
+        var rr = r + dr;
+        if (rr < 0) rr = -rr; else if (rr >= s) rr = 2 * (s - 1) - rr;
+        for (var dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          var cc = c + dc;
+          if (cc < 0) cc = -cc; else if (cc >= s) cc = 2 * (s - 1) - cc;
+          if (a[rr * s + cc]) total++;
+        }
+      }
+      return total;
+    }
+
+    // --- One Conway generation (B3/S23). Black holes (2) are immune and just
+    // pass through; everything alive counts as a neighbor. ---
+
+    function lifeStep() {
+      var s = size, n = s * s, a = gridA, b = gridB;
+      for (var i = 0; i < n; i++) {
+        if (a[i] === 2) { b[i] = 2; continue; }
+        var r = (i / s) | 0;
+        var c = i - r * s;
+        var cnt = neighbors(a, s, r, c);
+        b[i] = a[i] ? (cnt === 2 || cnt === 3 ? 1 : 0) : (cnt === 3 ? 1 : 0);
+      }
+      var tmp = gridA; gridA = gridB; gridB = tmp;
+    }
+
+    // --- Gravity: live cells drift one step toward the global center of mass.
+    // Black holes are fixed anchors. Moves are population-conserving. ---
+
+    function gravityStep() {
+      var s = size, n = s * s, a = gridA, out = gridB;
+      var prob = Math.abs(gravity) / 10;
+      var dir = gravity > 0 ? 1 : -1; // attract toward / repel away from the center of mass
+      var sumR = 0, sumC = 0, count = 0;
+      for (var i = 0; i < n; i++) {
+        if (a[i]) { var r0 = (i / s) | 0; sumR += r0; sumC += i - r0 * s; count++; }
+      }
+      if (count === 0) return;
+      var comR = sumR / count, comC = sumC / count;
+
+      out.set(a);
+      for (var j = 0; j < n; j++) {
+        if (a[j] !== 1) continue; // only ordinary cells move; black holes stay
+        if (Math.random() >= prob) continue;
+        var r = (j / s) | 0, c = j - r * s;
+        var nr = r + dir * Math.sign(comR - r), nc = c + dir * Math.sign(comC - c);
+        if (nr < 0 || nr >= s || nc < 0 || nc >= s) continue;
+        var t = nr * s + nc;
+        if (t !== j && out[t] === 0 && out[j] === 1) { out[t] = 1; out[j] = 0; }
+      }
+      var tmp = gridA; gridA = out; gridB = tmp;
+    }
+
+    // --- Black holes attract each other: each drifts one step toward the
+    // mass-weighted barycenter of all the holes, and any that land on the same
+    // cell merge (masses combine). They also swallow a live cell they land on. ---
+
+    function blackHoleStep() {
+      if (holes.size === 0) return;
+      var s = size, a = gridA;
+      var list = Array.from(holes);
+
+      // Mass-weighted barycenter of all black holes.
+      var sumR = 0, sumC = 0, mtot = 0;
+      for (var i = 0; i < list.length; i++) {
+        var h = list[i], m = mass[h] || 1, r = (h / s) | 0;
+        sumR += r * m;
+        sumC += (h - r * s) * m;
+        mtot += m;
+      }
+      var br = sumR / mtot, bc = sumC / mtot;
+      var dir = gravity > 0 ? 1 : -1; // black holes attract / repel each other too
+
+      // Lift the holes off the grid, then drop them at their new spots, merging
+      // any collisions.
+      for (var j = 0; j < list.length; j++) a[list[j]] = 0;
+      var newHoles = new Set(), newMass = {};
+      for (var k = 0; k < list.length; k++) {
+        var hk = list[k], mk = mass[hk], rr = (hk / s) | 0, cc = hk - rr * s;
+        var nr = rr, nc = cc;
+        if (list.length > 1) {
+          nr = rr + dir * Math.sign(br - rr);
+          nc = cc + dir * Math.sign(bc - cc);
+          if (nr < 0 || nr >= s) nr = rr;
+          if (nc < 0 || nc >= s) nc = cc;
+        }
+        var t = nr * s + nc;
+        if (newHoles.has(t)) {
+          newMass[t] += mk; // merge
+        } else {
+          if (a[t] === 1) mk += 1; // swallow a live cell at the destination
+          newHoles.add(t);
+          newMass[t] = mk;
+          a[t] = 2;
+        }
+      }
+      holes = newHoles;
+      mass = newMass;
+    }
+
+    // --- Stellar events: dense cores collapse into black holes, holes eat
+    // neighbors and gain mass, and overfed holes go supernova. ---
+
+    function stellarStep() {
+      var s = size, n = s * s, a = gridA;
+
+      // Collapse: crowded cells become black holes (instead of dying).
+      var formed = [];
+      for (var i = 0; i < n; i++) {
+        if (a[i] !== 1) continue;
+        var r = (i / s) | 0, c = i - r * s;
+        if (neighbors(a, s, r, c) >= FORM_NEIGHBORS) formed.push(i);
+      }
+      for (var k = 0; k < formed.length; k++) {
+        var idx = formed[k];
+        a[idx] = 2;
+        holes.add(idx);
+        mass[idx] = (mass[idx] || 0) + 8;
+      }
+
+      // Accretion + collapse to supernova.
+      var novas = [];
+      holes.forEach(function (h) {
+        var r = (h / s) | 0, c = h - r * s, eaten = 0;
+        for (var dr = -1; dr <= 1; dr++) {
+          var rr = r + dr; if (rr < 0 || rr >= s) continue;
+          for (var dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            var cc = c + dc; if (cc < 0 || cc >= s) continue;
+            var ni = rr * s + cc;
+            if (a[ni] === 1) { a[ni] = 0; eaten++; }
+          }
+        }
+        mass[h] = (mass[h] || 0) + eaten * 3 + 1;
+        if (mass[h] >= NOVA_MASS) novas.push(h);
+      });
+
+      // Supernova: the hole detonates into a ring of fresh cells, which gravity
+      // then pulls back to re-collapse.
+      for (var m = 0; m < novas.length; m++) {
+        var h = novas[m], r = (h / s) | 0, c = h - r * s;
+        a[h] = 0; holes.delete(h); delete mass[h];
+        for (var ang = 0; ang < 360; ang += 18) {
+          var rad = ang * Math.PI / 180;
+          var rr = Math.round(r + NOVA_RADIUS * Math.sin(rad));
+          var cc = Math.round(c + NOVA_RADIUS * Math.cos(rad));
+          if (rr >= 0 && rr < s && cc >= 0 && cc < s) a[rr * s + cc] = 1;
+        }
+      }
+    }
+
+    // --- Draw the world, count population, report it to Elm ---
+
+    function render() {
+      var c = canvas();
+      if (!c) { requestAnimationFrame(render); return; }
+      var s = size, px = cellPx, w = Math.round(s * px);
       if (c.width !== w) c.width = w;
       if (c.height !== w) c.height = w;
       if (!wired) wire(c);
@@ -79,19 +284,60 @@
       var ctx = c.getContext("2d");
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, w, w);
+
+      var a = gridA, n = s * s, pop = 0;
+
+      // Ordinary live cells.
       ctx.fillStyle = "#000000";
-      var live = data.live;
-      var size = data.size;
-      var px = data.cellPx;
-      for (var k = 0; k < live.length; k++) {
-        var idx = live[k];
-        var x = (idx % size) * px;
-        var y = Math.floor(idx / size) * px;
-        ctx.fillRect(x, y, px, px);
+      for (var i = 0; i < n; i++) {
+        if (a[i] === 1) {
+          pop++;
+          var r = (i / s) | 0;
+          ctx.fillRect((i - r * s) * px, r * px, px, px);
+        }
       }
+
+      // Black holes (drawn on top, in colour, a little larger so they read).
+      ctx.fillStyle = "#c44bff";
+      var hp = Math.max(px, 3);
+      holes.forEach(function (h) {
+        pop++;
+        var r = (h / s) | 0, cc = h - r * s;
+        ctx.fillRect(cc * px - (hp - px) / 2, r * px - (hp - px) / 2, hp, hp);
+      });
+
+      app.ports.population.send(pop);
     }
 
-    app.ports.drawGrid.subscribe(draw);
+    // --- Mouse: click toggles a cell, drag paints cells alive ---
+
+    function indexOf(c, e) {
+      var rect = c.getBoundingClientRect();
+      var sx = c.width / rect.width;
+      var sy = c.height / rect.height;
+      var col = Math.floor((e.clientX - rect.left) * sx / cellPx);
+      var row = Math.floor((e.clientY - rect.top) * sy / cellPx);
+      if (col < 0 || row < 0 || col >= size || row >= size) return -1;
+      return row * size + col;
+    }
+
+    function wire(c) {
+      var dragging = false, moved = false, start = -1;
+      c.addEventListener("mousedown", function (e) {
+        dragging = true; moved = false; start = indexOf(c, e); e.preventDefault();
+      });
+      c.addEventListener("mousemove", function (e) {
+        if (!dragging) return;
+        moved = true;
+        var i = indexOf(c, e);
+        if (i >= 0) { gridA[i] = 1; render(); }
+      });
+      window.addEventListener("mouseup", function () {
+        if (dragging && !moved && start >= 0) { gridA[start] = gridA[start] ? 0 : 1; render(); }
+        dragging = false;
+      });
+      wired = true;
+    }
   </script>
 </body>
 </html>

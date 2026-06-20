@@ -7,7 +7,7 @@ import Html.Events exposing (onClick)
 
 
 import Messages exposing (..)
-import Model exposing (Model, Settings, Grid)
+import Model exposing (Model, Settings)
 import Patterns
 
 
@@ -57,7 +57,8 @@ controls model =
                 ++ String.fromFloat model.settings.cellPixelWidth
                 ++ "px    Speed: "
                 ++ String.fromInt perSecond
-                ++ "/s"
+                ++ "/s    Gravity: "
+                ++ String.fromInt model.gravity
           ]
   in
     div [ style "margin-bottom" "16px" ]
@@ -74,6 +75,10 @@ controls model =
             , button [ onClick ZoomIn ] [ text "Zoom +" ]
             , button [ onClick SlowDown ] [ text "Slower" ]
             , button [ onClick SpeedUp ] [ text "Faster" ]
+            , button [ onClick GravityDown ] [ text "Gravity −" ]
+            , button [ onClick GravityUp ] [ text "Gravity +" ]
+            , button [ onClick ToggleReflect ]
+                [ text (if model.reflect then "Walls: Reflecting" else "Walls: Dead") ]
             ]
         , counters
         ]

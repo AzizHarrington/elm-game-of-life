@@ -1,25 +1,22 @@
 module Messages exposing (..)
 
 
-import Time
-
 import Patterns exposing (Pattern)
 
 
 type Msg
-  = ToggleCell Int
-  | Step
-  | AgeWorld Time.Posix
+  = Step
+  | Tick
   | ToggleTime
-  | MouseDown
-  | MouseUp
-  | AnimateCell Int
   | RandomizeGrid
-  | SetGrid (List Bool)
   | LoadPattern Pattern
   | ResetGrid
   | ZoomIn
   | ZoomOut
   | SpeedUp
   | SlowDown
+  | GravityUp
+  | GravityDown
+  | ToggleReflect
+  | PopulationChanged Int
   | NoOp

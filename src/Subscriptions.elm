@@ -6,26 +6,11 @@ import Model exposing (Model)
 import Ports
 
 
-import Time
-
-
+-- The clock lives in a Web Worker (so it survives backgrounded tabs); each tick
+-- it sends advances a generation. Population updates come back the same way.
 subscriptions : Model -> Sub Msg
-subscriptions model =
+subscriptions _ =
   Sub.batch
-    [ tick model
-    , Ports.cellToggled ToggleCell
-    , Ports.cellPainted AnimateCell
+    [ Ports.tock (\_ -> Tick)
+    , Ports.population PopulationChanged
     ]
-
-
-tick : Model -> Sub Msg
-tick model =
-  if isRunning model then
-    Time.every model.settings.timeStep AgeWorld
-  else
-    Sub.none
-
-
-isRunning : Model -> Bool
-isRunning model =
-  model.settings.running && not model.settings.highlight

@@ -12,30 +12,33 @@ Neighbors are the 8 surrounding cells. The grid does not wrap — cells past the
 edges are treated as dead.
 
 The grid starts at 100×100, but its size is dynamic: loading a large preset
-(the breeder) switches to a much bigger world. The world is drawn on a single
-`<canvas>` rather than one DOM node per cell, so it scales to millions of cells.
+(the breeder) switches to a much bigger world. To make grids of millions of
+cells fast, the simulation and rendering run in **JavaScript** over a flat
+`Uint8Array`, drawn on a single `<canvas>`. Elm stays as the controller — it
+owns the UI, the clock, the generation count, and the zoom/speed settings, and
+drives the engine through ports (see [Architecture](#architecture)).
 
 ## Running it
 
 The project uses **Elm 0.19.1**. A local copy is installed under
 `node_modules` (via `npm install`), so you don't need a global Elm.
 
-Because rendering and mouse input go through JS ports, the app is **not** a
-standalone HTML file — `index.html` is a checked-in wrapper that loads the
-compiled `elm.js`. Build it, then open the page:
+Because the engine and rendering live in JS, the app is **not** a standalone
+HTML file — `index.html` is a checked-in wrapper that loads the compiled
+`elm.js` and contains the JS engine. The simplest way to build and serve:
 
 ```sh
-./node_modules/.bin/elm make Main.elm --output=elm.js
+npm start          # builds elm.js, serves at http://localhost:5555/
+```
+
+Or build and open manually:
+
+```sh
+npm run build      # elm make Main.elm --output=elm.js --optimize
 open index.html
 ```
 
 `elm.js` is the build artifact and is gitignored; `index.html` is source.
-
-To serve it over HTTP (any static server works), e.g. on port 5555:
-
-```sh
-npx http-server -p 5555     # then visit http://localhost:5555
-```
 
 ## Controls
 
@@ -47,13 +50,17 @@ npx http-server -p 5555     # then visit http://localhost:5555
 - **Zoom − / Zoom +** — scale the cells down/up; the grid scrolls within its
   viewport when it's bigger than the screen.
 - **Slower / Faster** — halve/double the tick rate.
+- **Gravity − / Gravity +** — a non-Conway twist (0–8). With gravity on, each
+  generation every live cell also drifts one step toward the global center of
+  mass (population-conserving — a blocked cell just stays). Low values give a
+  slow inward drift; high values collapse everything into a central blob. It's
+  an experiment, not real Game of Life — but a fun one.
 - **Click** a cell to toggle it alive/dead.
 - **Click-and-drag** across cells to paint them alive.
 
 Below the buttons, a readout shows **generation**, **live cells**, the current
-**grid** size, **zoom** (pixels per cell), and **speed** (target generations per
-second). Note that very large grids (the breeder) are limited by computation, so
-the actual rate may fall short of the requested speed.
+**grid** size, **zoom** (pixels per cell), **speed** (target generations per
+second), and **gravity** strength.
 
 ## Presets
 
@@ -79,33 +86,37 @@ The Breeder is the heavyweight: Gosper's 1971 pattern (4060 cells in a 749-wide
 bounding box) that sweeps right laying down glider guns, which then spray
 gliders — so the live-cell count grows with the *square* of time. It needs room,
 so loading it switches the world to **1200×1200** (1.44 million cells) and starts
-it at the left edge. At that size the simulation runs roughly **1 generation per
-second**, so it's best watched by letting it run for a while or stepping through
-it. The pattern is parsed from the Golly pattern collection (`breeder.lif`).
+it at the left edge. Thanks to the JS engine it still runs at tens of
+generations per second at that size. The pattern is parsed from the Golly
+pattern collection (`breeder.lif`).
 
 ## Project layout
 
-The code follows the standard Elm Architecture (Model / Update / View),
-split into focused modules:
+### Architecture
+
+Elm is the **controller** (standard Model / Update / View), and the simulation
+engine lives in **JavaScript** for speed. They talk over ports.
 
 | File                   | Responsibility                                              |
 | ---------------------- | ----------------------------------------------------------- |
 | `Main.elm`             | Wires everything together via `Browser.element`.            |
-| `src/Model.elm`        | `Model` and `Settings` types, plus the initial state.       |
+| `src/Model.elm`        | `Model`/`Settings` (running, speed, zoom, generation, population) and the initial state. |
 | `src/Messages.elm`     | The `Msg` type — every event the app can handle.            |
-| `src/Update.elm`       | State transitions, including the Game of Life rules (`ageGrid`). |
+| `src/Update.elm`       | Handles messages; sends engine commands out the ports.      |
 | `src/View.elm`         | Renders the controls, counters, and the `<canvas>` element. |
-| `src/Subscriptions.elm`| Clock tick that ages the world, plus inbound mouse ports.   |
+| `src/Subscriptions.elm`| Clock tick (drives stepping) and the inbound population port. |
 | `src/Patterns.elm`     | The named presets and the logic for placing them on the grid. |
-| `src/Ports.elm`        | Ports: `drawGrid` out to the canvas, mouse events back in.  |
+| `src/Ports.elm`        | Ports to/from the JS engine (load, randomize, step, zoom, population). |
 | `src/Breeder.elm`      | The breeder's 4060 cells (generated from `breeder.lif`).    |
-| `index.html`           | Wrapper that boots `elm.js`, draws the canvas, handles mouse. |
+| `index.html`           | The JS engine: the `Uint8Array` world, the Conway step, canvas drawing, and mouse input. |
 
-The grid is stored as an `Array Cell`, where each `Cell` knows its index `id`
-and whether it `isAlive`. Cell position is derived from the index using the
-grid width (e.g. neighbors are `id ± 1`, `id ± width`, etc.). Rendering is done
-in JS: after every update Elm sends the live-cell indices over the `drawGrid`
-port and `index.html` paints them onto the canvas.
+The world is a flat `Uint8Array` (1 = alive) held in JS, double-buffered so each
+generation is computed without allocation. A cell's position is its index;
+neighbors are `i ± 1`, `i ± width`, and the diagonals, with edges treated as
+dead (no wrapping). Elm drives the clock: while running, `Time.every` sends a
+`stepEngine` command; JS advances one generation, redraws, and reports the new
+population back to Elm for the counter. Because everything runs on one thread,
+the clock self-throttles to whatever the engine can sustain.
 
 Presets are defined in `Patterns.elm` as a list of `(row, col)` offsets, an
 `Anchor` (`Center`, `Top`, or `Left`) saying where to drop them, and a
